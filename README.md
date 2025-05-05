@@ -32,7 +32,7 @@ Key Variables:
 
 ## Tools Used
 R Programming Language
- -`ggplot2`, `dplyr`, `tidyr`
+ - `ggplot2`, `dplyr`, `tidyr`
  - `RMarkdown` for documentation
  - Data wrangling and transformation using `tidyverse`
 
