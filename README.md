@@ -1,5 +1,5 @@
 # Indoor Air Pollution and Economic Development: A Data Visualisation Project
-This project using the R Programming Language was completed as part of DSA2101 – Essential Data Analytics Tools: Data Visualisation at the National University of Singapore (NUS). 
+This project using the R Programming Language was completed as part of __DSA2101 – Essential Data Analytics Tools: Data Visualisation__ at the National University of Singapore (NUS). 
 
 ### Contributors
 - Phua Wei Jie, Ryan
@@ -31,7 +31,7 @@ Key Variables:
 - Population (for normalization)
 
 ## Tools Used
-R Programming Language
+**R Programming Language**
  - `ggplot2`, `dplyr`, `tidyr`
  - `RMarkdown` for documentation
  - Data wrangling and transformation using `tidyverse`
