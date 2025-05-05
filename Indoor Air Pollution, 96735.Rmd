@@ -1,0 +1,237 @@
+---
+title: "DSA2101 Group Project: Indoor Air Pollution (Group: 96735)"
+author: "Tan Yu Wen, Avril Moh Ying Xuan, Phua Wei Jie Ryan, Roderich Suwandi Lee,
+  Chia Wei En Royston"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+# Introduction
+
+Indoor air pollution poses a severe health risk, particularly to the world's poorest populations who lack access to clean cooking fuels. The inhalation of pollutants from indoor sources, such as solid fuels like wood, charcoal, and coal, can lead to respiratory diseases and other health complications, resulting in a significant number of deaths annually.
+
+The data set used is sourced from Our World in Data and comprises several CSV files. These files contain information on a country's access to clean fuels and cooking technology as a percentage of its population, the Gross Domestic Product per capita of a country, adjusted for differences in purchasing power and expressed using a constant international dollar value from 2017 (GDP per capita, PPP (constant 2017 international $), the number of deaths caused by indoor air pollution, as well as the country's name and its continent.
+
+Using the data, this project **aims to investigate whether there exists a correlation between a continent's wealth, as indicated by GDP per capita (PPP), and the number of deaths caused by indoor air pollution**. By analysing this relationship, we seek to uncover insights into the intersection of environmental health challenges and economic development, with the ultimate goal of informing policy decisions and interventions to mitigate the detrimental impacts of indoor air pollution.
+
+# Data Cleaning
+
+Let us load the relevant libraries required and the CSV files into `R`.
+
+```{r libraries, message=FALSE}
+# Importing relevant libraries
+library(tidyverse)
+library(readr)
+library(ggrepel)
+
+# Reading in the required data
+indoor_pollution <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-04-12/indoor_pollution.csv')
+fuel_access <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-04-12/fuel_access.csv')
+fuel_gdp <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-04-12/fuel_gdp.csv')
+death_source <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-04-12/death_source.csv')
+death_full <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-04-12/death_fuel.csv')
+death_timeseries <- readr::read_csv('https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2022/2022-04-12/death_timeseries.csv')
+```
+The `str()` function is then used to check the structure of each data set, which includes the variable names, data types, and dimensions, missing values. This step helps in understanding the data and identifying any potential issues.
+```{r checking structures, results = 'hide'}
+# Checking the structures of the data
+str(indoor_pollution)
+str(fuel_access)
+str(death_full)
+str(death_timeseries)
+```
+
+In the `death_full` data set, we identified 2 redundant columns, specifically the 5th and 6th columns, both of which reference the year 2019. As a result, we decided to remove these columns to maintain our analysis within the time period from 2000 to 2016.
+
+```{r removing columns}
+# Removing redundant columns
+death_full = death_full %>% select(-5,-6)
+cleaned_death = death_full %>% select(-Continent, -Code)
+```
+
+In our data exploration, we noticed that there were invalid years in the `fuel_gdp` data set, such as negative years and primordial years (e.g. Year 0, Year 100) and these invalid years have NA values in their Access and GDP columns. As such, they were removed using `complete.cases()` to create a new dataframe `cleaned_fuel_gdp`.
+
+For each `Entity`, the only entry with the `Continent` data is when the year is 2015. Additionally, not all entities under the `Entity` column in `fuel_gdp` have corresponding continents under the `Continent` column as such entities are not countries but rather regions. In order to ensure that all the years from 2000 to 2016 have the correct continent and the entities without any entry in the `Continent` column are removed, we created a `continents` dataframe from the `fuel_gdp` data set by filtering the entities with a NA value in `Continent` and selecting only the entities and `Continent` column to keep. Then we left joined `fuel_gdp` with `continents` to make a new dataframe `full_data` where all the entries are assigned their correct continent.
+
+```{r data cleaning}
+# Problems with data: Year column has negative years or too old years like 0, 100, 200 etc., Not all Entities has Continents - because they are not countries and are more general regional areas and the Continent for each Entity is only recorded in the 2015 year
+# Some data entries has NA values so we should omit them because then when we calculate the averages it would be more fair (rather than treat NA as a value of 0)
+
+cleaned_fuel_gdp <- fuel_gdp[complete.cases(fuel_gdp[, 5]), ]
+cleaned_fuel_gdp <- cleaned_fuel_gdp[complete.cases(cleaned_fuel_gdp[, 4]), ]
+cleaned_fuel_gdp <- cleaned_fuel_gdp[complete.cases(cleaned_fuel_gdp[, 6]), ]
+
+# Since we intend to compare countries, we should make Entity a column for countries only. There are some regions that are not countries in entities, and they are the ones that have NA as a value in Continent, so we should filter out the NA in Continent column. Continents are only found in the 2015 entries, so we would have to fill the Continent value for every other year
+continents = fuel_gdp %>% filter(!is.na(Continent)) %>% select(Entity, Continent)
+full_data = cleaned_fuel_gdp %>% select(-Continent) %>% left_join(continents, by = "Entity")
+```
+
+Lastly, we created a new and final dataframe `final_data` by left joining `full_data` with `cleaned_death`.
+
+```{r joining data}
+# Joining the data with the death dataframe
+final_data = full_data %>% left_join(cleaned_death, by=c("Entity","Year" = "Year...3"))
+```
+
+# Data Visualisations
+
+## Visualisation 1: Access to Clean Technology vs GDP per capita
+In this visualisation, we explore the **relationship between a country's access to clean fuels and technologies for cooking and its average GDP per capita, categorised by continent**. 
+
+
+We processed the `final_data` data set by removing all rows with missing values in the Access to clean fuels and technologies for cooking (% of population) and GDP per capita, PPP (constant 2017 international $) columns. This was done in preparation for calculating the averages of these columns from 2000 to 2016, grouped by `Entity`. We computed these averages using the `mutate()` function and stored them in new columns named `avg_gdp` and `avg_access`. Afterward, we ungrouped the dataframe. From this modified dataframe, we retained only the `Entity`, `Continent`, `avg_gdp`, and `avg_access` columns, removing any duplicates using the `distinct()`function. The resulting data frame was stored in `data_for_graph`.
+
+The data frame is then represented using a scatter plot, where each data point corresponds to a country.
+
+The scatter plot is chosen as it allows for the simultaneous representation of two continuous variables – GDP per capita and percentage access to clean fuels and technologies for cooking – on a two-dimensional plane. This visual representation provides an intuitive overview of the data distribution and allows for the identification of any patterns or trends.
+
+Countries are categorised by continent, with each continent denoted by a distinct colour. This categorical differentiation enhances the clarity of the visualisation, enabling viewers to discern geographical patterns and differences across continents.
+
+A best fit curve is added to the scatterplot to highlight any underlying trends or relationships between the continuous data. This curve aids in identifying general trends in the data and provides insight into the overall relationship between GDP per capita and percentage access to clean fuels and technologies for cooking.
+
+```{r visualisation 1}
+
+# Preparing the data set
+data_for_graph = final_data %>%
+  na.omit(`Access to clean fuels and technologies for cooking (% of population)`, `GDP per capita, PPP (constant 2017 international $)`) %>%
+  group_by(Entity) %>%
+  mutate(avg_gdp = mean(`GDP per capita, PPP (constant 2017 international $)`), avg_access = mean(`Access to clean fuels and technologies for cooking (% of population)`)) %>%
+  ungroup() %>%
+  select(Entity, Continent, avg_gdp, avg_access) %>% distinct() # to ensure theres only one entry per country
+
+# Identifying anomalies
+outliers <- data_for_graph %>%
+  filter(avg_gdp >= 25000, avg_access < 85)
+
+# Plotting the visualisation
+ggplot(data_for_graph, aes(x = avg_gdp, y = avg_access, color = Continent)) +
+  geom_point(size = 2, position = "jitter") +
+  geom_smooth(method = "loess", formula = y ~ log(x), span = 0.5, color = "black", alpha = 0, linetype = "dashed") +
+  labs(x = "GDP per capita, PPP (constant 2017 international $)", y = "Access to clean fuels and technologies for cooking (%)",
+       title = "Average access to clean fuel vs Country's Average GDP per capita",
+       caption = "Dashed black line represents best fit line of all the points") +
+  geom_hline(yintercept = 100, linetype = "dotted") +
+  geom_label_repel(data = outliers, aes(label = Entity), color = "black",
+                   nudge_x = 10, nudge_y = 10, segment.color = "black") +
+  theme_classic() +
+  theme(plot.title = element_text(hjust = 0.5, face ="bold"))
+```
+
+## Visualisation 2: Deaths by Indoor Air Pollution vs Clean Technology Access
+
+Next, we will explore the **temporal trends of indoor air pollution-related deaths and access to clean fuel and technologies for cooking across continents as a percentage of their populations**. This will be achieved by incorporating an area graph to depict the percentage number of deaths caused by indoor air pollution over time for each continent, alongside a line graph representing the corresponding percentage access to clean fuel and technologies for cooking. 
+
+We prepared the data by first cleaning `final_data` to suit the needs of this visualisation. Since the primary focus of this visualisation is to explore access to clean fuel and deaths caused by indoor air pollution, we first removed unwanted columns and renamed long titled columns (for subsequent easier manipulation), keeping the data that we want to use (i.e. `Year`, `Access to clean fuels and technologies for cooking (% of population)`, `Deaths - Cause: All causes - Risk: Household air pollution from solid fuels - Sex: Both - Age: All Ages (Number)...4`, `Continent` and `Population (historical estimates)`). Following that, we removed any `NA` values which might affect the computation of subsequent values and lead to data inaccuracies in subsequent steps. Next, since we are looking at the deaths as a percentage of population, we decided to add a new column (using the `mutate()` function) by computing that variable whose equation is represented by: 
+
+`Deaths by Indoor Air Pollution (as a Percentage of Population)` = (`Deaths by Indoor Air Pollution` / `Population (historical estimates)`) * 100
+
+Finally, in the last step of the data cleaning, we grouped the data (using the `group_by()` function) by `Continent` and `Year`, summarising the data (using the `sumarize()` function) into the means (using the `mean()` function) of `Deaths (% of Population)` and `% Access to Clean Fuel` . 
+
+With the finalised data set, `deaths_fuel_continent`, we plot an area graph representing the `Deaths (% of Population)` on the left x-axis, and a point graph with a line representing `% Access to Clean Fuel` by `Continent` over the years (i.e. 2000 - 2016), where the colour of the graphs, points and lines are represented by the `Continent` variable, allowing for clearer distinction and visualisation of the data.
+
+The use of both area and line graphs enables viewers to simultaneously compare trends in indoor air pollution-related deaths and access to clean fuel across continents over time. The number of deaths caused by air pollution is scaled by a factor of 10^3 /3 in the graph to improve readability. Additionally, each continent is distinguished by a distinct coloured area, allowing the viewer to gain insights into how indoor air pollution-related deaths and access to clean fuel vary geographically across continents.
+
+```{r visualisation 2}
+# Preparing the data set
+## Renaming Column Names (for ease) and Removing Unwanted Columns
+fuel_death_df = final_data %>% select(-`GDP per capita, PPP (constant 2017 international $)`, -`Code`, -`Entity`) %>% rename(`Clean Fuel (%)` = `Access to clean fuels and technologies for cooking (% of population)`, `Deaths by Indoor Air Pollution` = `Deaths - Cause: All causes - Risk: Household air pollution from solid fuels - Sex: Both - Age: All Ages (Number)...4`)
+
+## Removing NA Values
+fuel_death_df = fuel_death_df %>% drop_na
+
+## Adding a column for Percentage of Population Death from Indoor Air Pollution
+fuel_death_df = fuel_death_df %>% mutate(`Deaths by Indoor Air Pollution (as a Percentage of Population)` = (`Deaths by Indoor Air Pollution` / `Population (historical estimates)`) * 100)
+
+## Sorting Deaths and Clean Fuel % by Continent
+deaths_fuel_continent = fuel_death_df %>%
+  group_by(Continent, Year) %>%
+  summarise(
+    `Average access to Clean Fuel (%)` = mean(`Clean Fuel (%)`),
+    `Average Deaths (3x10^-3)` = mean(`Deaths by Indoor Air Pollution (as a Percentage of Population)`) * 10^3/3,
+    .groups = 'drop')
+### Note: We chose to scale the Deaths by Indoor Pollution (% of Population) by a factor of 10^3/3 to allow better visualization of the trend and relationship between Clean Fuel Access and Average Deaths
+
+# Plotting an Area Graph representing the % Deaths (of Population) by Continent & a point graph with a line representing the trend of % Access to Clean Fuel (of Population) by Continent, with the X-axis representing the years (from 2000 to 2016)
+plot <- ggplot(deaths_fuel_continent) +
+  geom_area(aes(x = `Year`, y = `Average Deaths (3x10^-3)`, fill = `Continent`), alpha = 0.5) +
+  labs(title = "Access to Cooking Fuels vs Deaths by Indoor Air Pollution",
+       subtitle = "Across Years by Continent",
+       x = "",
+       y = expression("Number of Deaths (% of Population (3\u00D7"*10^-3*")) (Area)"),
+       caption = "The area graph represents the percentage of deaths by continents over the years, 
+       the point graph represent the percentage of access to clean fuel by population") +
+  geom_point(aes(x = Year, y = `Average access to Clean Fuel (%)`, group = Continent, color = Continent), size = 2.1) +
+  geom_line(aes(x = Year, y = `Average access to Clean Fuel (%)`, group = Continent, color = Continent), size = 1.5, linewidth = 0.5) +
+  scale_color_discrete(name = "Continent") +
+  scale_y_continuous(sec.axis = sec_axis(~.+0, name = "Access to Clean Fuel (% of Population) (Line)")) +
+  scale_x_continuous(breaks = seq(2000, 2016, by = 2)) +
+  theme_classic()+
+  theme(axis.text.x = element_text(hjust = 0.5, face = "bold"),
+        plot.title = element_text(hjust = 0.5, size = 14, face = "bold"),
+        plot.subtitle = element_text(hjust = 0.5, size = 13),
+        plot.caption = element_text(hjust = 0.5)
+        )
+
+plot
+```
+
+## Visualisation 3: GDP per capita vs Deaths by Indoor Air Pollution
+Finally, we analyse the **relationship between the mean GDP per capita and the mean number of deaths caused by indoor air pollution for each continent over time**. It employs a multi-panel layout, with each panel representing a distinct continent, facilitating comparisons across continents.
+
+We prepared the dataset by grouping the data based on `Year`, `Continent` and computed the aggregate mean number of deaths caused by indoor air pollution and GDP per capita using the `mean()` function before omitting all NA values and storing the resulting data frame in `gdp_deaths`.
+
+The visualisation uses `gdp_deaths` and combines bars and lines to depict two key variables over time. The bars represent the mean number of deaths caused by indoor air pollution for each year, while the lines illustrate the mean GDP per capita over the same period. This dual representation allows for a comprehensive understanding of the relationship between the two variables.
+
+The `facet_wrap()` function divides the graph into multiple panels, with each panel dedicated to a specific continent. This segmentation enables viewers to easily compare the trends in GDP per capita and indoor air pollution deaths across continents, identifying variations and patterns unique to each region.
+
+```{r visualisation 3}
+# Preparing the data set
+gdp_deaths = final_data %>% group_by(Year,Continent) %>% summarize(mean_deaths = mean(`Deaths - Cause: All causes - Risk: Household air pollution from solid fuels - Sex: Both - Age: All Ages (Number)...4`), mean_gdp = mean(`GDP per capita, PPP (constant 2017 international $)`))
+#Omitted countries with NA values in continents
+gdp_deaths = na.omit(gdp_deaths)
+
+#Bar plot and Line graph
+ggplot(gdp_deaths, aes(x=Year)) + geom_col(aes(y=mean_deaths),fill="lightblue",alpha=0.8) +
+                                 geom_line(aes(y=mean_gdp),size=1,col="indianred3") +
+                                 facet_wrap(~ Continent) +
+                                 labs(title = "GDP Per Capita and Mean Number of Deaths from Indoor Air Pollution", x="Year", y = "", caption = "Bar Plot: Mean Deaths from Household Air Pollution \n Line Graph: GDP per capita, PPP (USD$)") +
+                                 theme_classic() +
+                                 theme(plot.title = element_text(hjust = 0.5, size = 15, face = "bold"))
+```
+
+# Discussion and Results
+
+From the first visualisation, we observe that there is a positive relationship between a country's access to clean fuels and technologies for cooking and its average GDP per capita. Generally, countries with higher percentages of access to clean fuels tend to have higher average GDP per capita, indicating a potential link between a country’s wealth and the population’s access to clean fuel and cooking technologies.
+
+However, Equatorial Guinea is an anomalous data point. It has a high GDP per capita relative to other countries in Africa primarily due to its significant oil reserves. Yet, because of its uneven distribution of wealth and resources, prices for electricity remain unaffordable for lower-income households, thereby limiting their access to clean fuel and technologies for cooking.
+
+In the second visualisation, it is observed that across all continents, there seems to be an upward trend in access to clean fuel and cooking technologies over the years. This suggests that efforts to improve access to clean fuels for cooking have been successful globally. There are also noticeable differences in access to clean fuel among continents. Some continents show higher levels of access compared to others. For example, access to clean fuel appears to be consistently high in Europe and North America compared to other regions. Additionally, there is an inverse relationship between access to clean fuel for cooking and deaths by indoor air pollution. As access to clean fuel increases, there is a general trend of decreasing deaths caused by indoor air pollution. This suggests that improved access to clean cooking fuels may contribute to reducing indoor air pollution-related health risks.
+
+The third visualisation reveals a notable trend: countries with higher mean GDP per capita generally exhibit lower average numbers of deaths caused by indoor air pollution. However, there exists an anomaly within Asia, where despite not having the lowest mean GDP per capita, it experiences the highest average number of deaths from indoor air pollution.
+
+This anomaly can be elucidated by considering the high population densities prevalent in many Asian countries, particularly in urban areas. The concentration of people exacerbates the adverse effects of indoor air pollution, especially in low-income households that often rely on traditional cooking methods utilising solid fuels.
+
+In conclusion, these visualisations highlight the complex interplay between a continent’s wealth, access to clean fuels and cooking technologies, and indoor air pollution deaths. While access to clean fuels and cooking technologies is generally lower in poorer countries, economic development and improved access to clean energy solutions can contribute to a reduction in indoor air pollution-related mortality. Therefore, to answer the overarching question, **the relationship between a continent’s GDP per capita and the number of deaths caused by indoor air pollution could be modeled as an inverse one**, since a richer country (as indicated by higher GDP per capita), corresponds to higher access to clean fuels and technologies, and resultantly lower death rates caused by indoor air pollution. Thus, addressing disparities in access to clean fuels and promoting sustainable economic growth are crucial steps towards mitigating the adverse health effects of indoor air pollution globally. 
+
+# References
+1. African Economic Outlook. (2012). Equatorial Guinea - African economic outlook. https://www.afdb.org/fileadmin/uploads/afdb/Documents/Publications/Equatorial Guinea Full PDF Country Note.pdf 
+2. Byaro, M., Mmbaga, N. F., & Mafwolo, G. (2024, February 19). Tackling Energy Poverty: Do Clean Fuels for cooking and access to electricity improve or worsen health outcomes in sub-Saharan Africa?. World Development Sustainability. https://www.sciencedirect.com/science/article/pii/S2772655X2400003X 
+3. Guardian News and Media. (2018, May 1). Air pollution inequality widens between rich and Poor Nations. The Guardian. https://www.theguardian.com/environment/2018/may/01/air-pollution-inequality-widens-between-rich-and-poor-nations 
+4. Rentschler, J., & Leonova, N. (2023, July 22). Global Air Pollution Exposure and poverty. Nature News. https://www.nature.com/articles/s41467-023-39797-4 
+5. Ritchie, H., & Roser, M. (2024, March 15). Indoor Air Pollution. Our World in Data. https://ourworldindata.org/indoor-air-pollution 
+
+# About
+| Name      | Year | Major            | Responsibilities |
+|:-----------:|:------:|:------------------:|:------------------:|
+| Tan Yu Wen |    2  |Data Science & Analytics| Write-up of Introduction, Visualisations, Discussion|
+| Avril Moh Ying Xuan |   2   | Data Science & Analytics  | Data Cleaning, First Visualisation|
+| Phua Wei Jie Ryan |   2  |Data Science & Analytics| Data Cleaning, Second Visualisation|
+| Roderich Suwandi Lee |   2   | Data Science & Analytics| Data Cleaning, Third Visualisation|
+| Chia Wei En Royston  |   2   |  Data Science & Analytics |Write-up of Visualisations, Discussion|
